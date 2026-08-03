@@ -17,6 +17,10 @@ export type ReminderIntent = {
   message: string;
   destination: Destination;
   arrivalRadiusMeters?: number;
+  maximumDurationMs?: number;
+  maximumChecks?: number;
+  maximumLocationAgeMs?: number;
+  maximumAccuracyMeters?: number;
   metadata?: Record<string, unknown>;
 };
 
@@ -29,8 +33,10 @@ export type RouteEstimate = {
 export type ReminderState =
   | "scheduled"
   | "checking"
+  | "retrying"
   | "triggered"
   | "cancelled"
+  | "expired"
   | "failed";
 
 export type ReminderEvent = {
@@ -38,5 +44,17 @@ export type ReminderEvent = {
   state: ReminderState;
   location?: LocationSnapshot;
   estimate?: RouteEstimate;
+  attempt?: number;
   reason?: string;
+};
+
+export type MonitorResult = {
+  id: string;
+  state: Extract<ReminderState, "triggered" | "cancelled" | "expired" | "failed">;
+};
+
+export type MonitorHandle = {
+  id: string;
+  completion: Promise<MonitorResult>;
+  cancel(): boolean;
 };
