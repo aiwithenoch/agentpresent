@@ -7,13 +7,12 @@
 [![CI](https://github.com/aiwithenoch/agentpresent/actions/workflows/ci.yml/badge.svg)](https://github.com/aiwithenoch/agentpresent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6.svg)](https://www.typescriptlang.org/)
-[![Open Source](https://img.shields.io/badge/Open%20Source-Yes-brightgreen.svg)](CONTRIBUTING.md)
 
 **AgentPresent is an open-source context engine that helps AI agents act at the right real-world moment.**
 
-Instead of blindly firing a timer, it checks live context, recalculates arrival time, schedules its own next investigation, and reminds the user only when the condition is actually true.
+The timer does not fire the reminder. It wakes the engine so it can investigate again.
 
-[Why it exists](#why-it-exists) · [How it works](#how-it-works) · [Quick start](#quick-start) · [Architecture](#architecture) · [Roadmap](#roadmap)
+[How it works](#how-it-works) · [Quick start](#quick-start) · [Reliability](#reliability) · [Architecture](#architecture) · [Roadmap](#roadmap)
 
 </div>
 
@@ -25,37 +24,9 @@ A user tells an AI agent:
 
 > “Remind me to take my medicine when I get home.”
 
-A normal reminder system may estimate 55 minutes and notify after 55 minutes.
+AgentPresent resolves “home,” reads the latest location, asks a routing provider for an ETA, schedules an internal recheck, and repeats until the arrival condition is true.
 
-AgentPresent does something smarter:
-
-1. Resolves where “home” is.
-2. Reads the user's current location.
-3. Gets a live route estimate.
-4. Schedules an internal recheck before the ETA.
-5. Wakes up and checks again.
-6. Adjusts when traffic, movement, or plans change.
-7. Sends the reminder only after arrival is confirmed.
-
-> **The timer does not trigger the reminder. The timer wakes the engine so it can investigate again.**
-
----
-
-## Why it exists
-
-Most agents are reactive. They wait inside a chat window for another message.
-
-AgentPresent gives them a reusable way to monitor real-world context without forcing every developer to rebuild:
-
-- location monitoring
-- destination resolution
-- route and ETA checks
-- adaptive scheduling
-- arrival detection
-- cancellation
-- agent callbacks
-
-AgentPresent is **not a hosted app**. It is infrastructure developers run inside their own agent stack. Location data does not need to pass through an AgentPresent server.
+It is a library, not a hosted app. Developers run it inside their own agent stack and provide their own location, place, route, notification, and telemetry adapters.
 
 ---
 
@@ -63,25 +34,27 @@ AgentPresent is **not a hosted app**. It is infrastructure developers run inside
 
 ```mermaid
 flowchart TD
-    A[Agent receives user intent] --> B[Resolve destination]
+    A[Agent creates monitor] --> B[Resolve destination]
     B --> C[Read current location]
-    C --> D{Inside arrival radius?}
-    D -- Yes --> H[Send reminder event]
-    D -- No --> E[Calculate live ETA]
-    E --> F[Choose adaptive recheck time]
-    F --> G[Sleep internally]
-    G --> C
+    C --> D{Location valid?}
+    D -- No --> R[Retry or fail]
+    D -- Yes --> E{Inside arrival radius?}
+    E -- Yes --> H[Notify agent]
+    E -- No --> F[Calculate live ETA]
+    F --> G[Choose adaptive recheck time]
+    G --> I[Sleep internally]
+    I --> C
 ```
-
-### Example timeline
 
 ```text
 ETA 55 min  → recheck later
 ETA 24 min  → recheck sooner
 ETA 8 min   → increase check frequency
-ETA 2 min   → check closely
+ETA 2 min   → check at the configured minimum interval
 Arrived     → notify agent
 ```
+
+Arrival currently uses straight-line Haversine distance against a configurable radius. Routing is used to schedule the next check, not to prove arrival. Integrators should choose a conservative radius for rivers, overpasses, gated sites, and dense buildings.
 
 ---
 
@@ -90,6 +63,7 @@ Arrived     → notify agent
 ```bash
 npm install
 npm run check
+npm run example
 ```
 
 ```ts
@@ -100,19 +74,47 @@ const present = new AgentPresent({
   places: myPlaceProvider,
   routes: myRouteProvider,
   notifier: myAgentCallback,
+  telemetry: myTelemetrySink,
 });
 
-await present.monitor({
+const handle = present.monitor({
   id: "medicine-at-home",
   message: "Take your medicine",
   destination: {
     type: "saved-place",
     placeId: "home",
   },
+  maximumDurationMs: 6 * 60 * 60_000,
+  maximumChecks: 200,
+  maximumLocationAgeMs: 60_000,
+  maximumAccuracyMeters: 100,
 });
+
+// monitor() returns immediately, so the agent can keep working.
+console.log(handle.id);
+
+// Optional: observe the final lifecycle result.
+console.log(await handle.completion);
+
+// Optional: cancel from the handle or engine.
+handle.cancel();
 ```
 
-The engine stays provider-agnostic. Developers bring their own location source, route provider, saved places, and notification channel.
+---
+
+## Reliability
+
+AgentPresent includes the controls required for long-running monitors:
+
+- exponential retry with configurable limits
+- transient-versus-fatal error classification
+- explicit `retrying`, `cancelled`, `expired`, and `failed` lifecycle states
+- maximum duration and maximum check budgets
+- stale-location and accuracy validation
+- separate telemetry and user-notification channels
+- non-blocking monitor handles with observable completion
+
+The default monitor lifetime is 24 hours with a 500-check budget. Applications should tune these values for their API costs, battery strategy, and use case.
 
 ---
 
@@ -123,16 +125,19 @@ AI agent
    │
    ▼
 AgentPresent core
-   ├── Intent monitor
+   ├── Non-blocking monitor handles
    ├── Adaptive scheduler
+   ├── Retry and backoff policy
+   ├── Location quality checks
    ├── Arrival evaluator
-   ├── Cancellation controller
-   └── Reminder events
+   ├── Duration/check budgets
+   └── Lifecycle events
           │
           ├── LocationProvider
           ├── PlaceProvider
           ├── RouteProvider
-          └── ReminderNotifier
+          ├── ReminderNotifier
+          └── TelemetrySink
 ```
 
 ### Provider interfaces
@@ -147,49 +152,25 @@ interface PlaceProvider {
 }
 
 interface RouteProvider {
-  estimate(
-    origin: Coordinates,
-    destination: Coordinates,
-  ): Promise<RouteEstimate>;
+  estimate(origin: Coordinates, destination: Coordinates): Promise<RouteEstimate>;
 }
 
 interface ReminderNotifier {
   notify(event: ReminderEvent): Promise<void>;
 }
+
+interface TelemetrySink {
+  record(event: ReminderEvent): Promise<void>;
+}
 ```
 
-Possible adapters include:
-
-| Capability | Providers |
+| Capability | Possible providers |
 |---|---|
 | Routing | Google Routes, Mapbox, HERE, OpenRouteService, OSRM, Valhalla |
 | Location | Browser geolocation, mobile runtime, wearable, custom agent client |
 | Places | Saved coordinates, geocoding APIs, custom user memory |
 | Notification | Agent callback, webhook, push notification, chat message |
-
----
-
-## Core principles
-
-### Provider-agnostic
-
-AgentPresent does not lock developers into Google, Mapbox, or any specific vendor.
-
-### Privacy-first
-
-Location can remain entirely inside the developer's own infrastructure.
-
-### State-based
-
-A reminder fires because a real-world condition became true, not because a guessed timer expired.
-
-### Adaptive
-
-The engine changes its next check based on distance, ETA, movement, and provider results.
-
-### Agent-native
-
-The final event goes back to an AI agent, which decides how to communicate or act.
+| Telemetry | Logs, OpenTelemetry, event store, custom audit sink |
 
 ---
 
@@ -197,17 +178,18 @@ The final event goes back to an AI agent, which decides how to communicate or ac
 
 > **Early MVP — active development**
 
-The current repository includes:
+Implemented:
 
-- adaptive location monitoring loop
-- provider interfaces
-- destination resolution
-- ETA-based recheck scheduling
-- arrival-radius detection
-- cancellation support
-- runnable TypeScript example
-- automated tests
-- GitHub Actions CI
+- [x] provider-agnostic core
+- [x] adaptive ETA-based rechecks
+- [x] non-blocking monitor handles
+- [x] cancellation lifecycle events
+- [x] retry and exponential backoff
+- [x] duration and check budgets
+- [x] location age and accuracy validation
+- [x] separate notifier and telemetry channels
+- [x] runnable TypeScript example
+- [x] automated tests and GitHub Actions CI
 
 ---
 
@@ -215,7 +197,8 @@ The current repository includes:
 
 - [ ] Persistent reminder store
 - [ ] Recovery after process restarts
-- [ ] Provider fallback and retry policies
+- [ ] Route-aware arrival strategies
+- [ ] Provider-specific error classifiers
 - [ ] Google Routes adapter
 - [ ] Mapbox adapter
 - [ ] OpenRouteService adapter
@@ -223,26 +206,8 @@ The current repository includes:
 - [ ] MCP server and tools
 - [ ] Natural-language intent parser
 - [ ] Arrival, departure, nearby, route, and dwell triggers
-- [ ] API and battery budget controls
-- [ ] Audit events and observability
+- [ ] Audit events and observability package
 - [ ] Python package
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) to help build it.
-
----
-
-## Repository structure
-
-```text
-agentpresent/
-├── src/                 Core engine and public types
-├── examples/            Runnable usage examples
-├── test/                Automated tests
-├── .github/workflows/   Continuous integration
-├── CONTRIBUTING.md      Contributor guide
-├── SECURITY.md          Security policy
-└── README.md             Project overview
-```
 
 ---
 
@@ -251,40 +216,19 @@ agentpresent/
 ```bash
 npm install
 npm run build
+npm run typecheck:examples
 npm test
 npm run check
-```
-
-Run the provider-agnostic demo:
-
-```bash
 npm run example
 ```
 
----
-
 ## Contributing
 
-Contributions are welcome, especially for:
-
-- routing adapters
-- location adapters
-- persistence
-- scheduling strategies
-- MCP integration
-- tests and documentation
-
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
-
----
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## Security and privacy
 
-AgentPresent may process highly sensitive location context. Integrations should use explicit user permission, collect the minimum data necessary, avoid unnecessary location history, and make every active monitor easy to inspect and cancel.
-
-Report security concerns through [SECURITY.md](SECURITY.md).
-
----
+Location context is sensitive. Integrations should request explicit permission, collect the minimum data required, avoid unnecessary history, and make every active monitor easy to inspect and cancel. See [SECURITY.md](SECURITY.md).
 
 ## License
 
