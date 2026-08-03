@@ -14,10 +14,11 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck:examples": "tsc -p tsconfig.examples.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "example": "tsx examples/basic.ts",
-    "check": "npm run build && npm test"
+    "check": "npm run build && npm run typecheck:examples && npm test"
   },
   "repository": {
     "type": "git",
