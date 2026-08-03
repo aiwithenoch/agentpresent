@@ -16,6 +16,14 @@ export interface ReminderNotifier {
   notify(event: ReminderEvent): Promise<void>;
 }
 
+export interface TelemetrySink {
+  record(event: ReminderEvent): Promise<void>;
+}
+
+export interface ErrorClassifier {
+  isTransient(error: unknown): boolean;
+}
+
 export interface Clock {
   now(): Date;
   sleep(milliseconds: number, signal?: AbortSignal): Promise<void>;
