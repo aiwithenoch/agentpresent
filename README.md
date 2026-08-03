@@ -1,55 +1,75 @@
 # AgentPresent
 
-**Open-source location-aware reminder infrastructure for proactive AI agents.**
+Open-source, location-aware reminder infrastructure for proactive AI agents.
 
-AgentPresent lets an agent monitor a real-world condition such as:
+AgentPresent lets an AI agent monitor real-world conditions such as:
 
 > Remind me to take my medicine when I get home.
 
-Instead of setting a timer for the first ETA, AgentPresent schedules internal context checks. It wakes up, reads the user's latest location, recalculates the ETA, adapts the next check, and only triggers the user-facing reminder after the arrival condition is true.
+Instead of treating the first estimated arrival time as the reminder time, AgentPresent uses that ETA to schedule an internal check. It wakes up, reads the latest location, recalculates the ETA, chooses the next check time, and only sends the reminder when the arrival condition is actually true.
 
-## Why AgentPresent?
-
-Normal reminders are time-based. AgentPresent is state-based.
+## How it works
 
 ```text
-User intent
-   ↓
-Resolve destination
-   ↓
-Read current location
-   ↓
-Check arrival radius
-   ↓
-Calculate live ETA
-   ↓
-Schedule an internal recheck
-   ↓
-Repeat until the condition is true
-   ↓
-Notify the agent/user
+User gives the agent an intent
+        |
+        v
+AgentPresent resolves the destination
+        |
+        v
+Reads the user's current location
+        |
+        v
+Checks whether the user has arrived
+        |
+        v
+Calculates a live route ETA
+        |
+        v
+Schedules an internal recheck
+        |
+        v
+Repeats until the condition is true
+        |
+        v
+Sends the reminder back to the AI agent
 ```
 
-AgentPresent is a library, not a hosted app. Location data stays inside the developer's own agent and infrastructure.
+AgentPresent is a library, not a hosted application. Developers run it inside their own agent and infrastructure. AgentPresent does not require users to send location data to an AgentPresent server.
 
-## Status
+## Project status
 
-Early MVP. The core adaptive monitoring loop and provider interfaces are implemented. Production persistence, provider packages, retries, and MCP support are next.
+AgentPresent is currently an early TypeScript MVP.
+
+The repository includes:
+
+- An adaptive location-monitoring loop
+- Arrival-radius detection
+- ETA-based recheck scheduling
+- Cancellation support
+- Provider interfaces
+- A runnable example
+- Unit tests
+- GitHub Actions CI
 
 ## Install
+
+The package is not published to npm yet. Clone the repository:
+
+```bash
+git clone https://github.com/aiwithenoch/agentpresent.git
+cd agentpresent
+npm install
+npm run check
+```
+
+After an npm release, installation will be:
 
 ```bash
 npm install agentpresent
 ```
 
-Until the package is published, clone the repository and run:
-
-```bash
-npm install
-npm run check
-```
-
-## Usage
+## Basic usage
 
 ```ts
 import { AgentPresent } from "agentpresent";
@@ -71,16 +91,9 @@ await present.monitor({
 });
 ```
 
-Your agent supplies four adapters:
+## Provider architecture
 
-- `LocationProvider`: returns the latest user coordinates.
-- `PlaceProvider`: resolves `home`, `work`, or another saved place.
-- `RouteProvider`: calculates a current travel ETA.
-- `ReminderNotifier`: sends the final event back to the agent, notification system, or chat.
-
-The core does not require Google Maps, Mapbox, or any specific vendor.
-
-## Provider model
+AgentPresent does not force developers to use one maps or location company. Developers inject providers that match these interfaces.
 
 ```ts
 interface LocationProvider {
@@ -92,7 +105,10 @@ interface PlaceProvider {
 }
 
 interface RouteProvider {
-  estimate(origin: Coordinates, destination: Coordinates): Promise<RouteEstimate>;
+  estimate(
+    origin: Coordinates,
+    destination: Coordinates,
+  ): Promise<RouteEstimate>;
 }
 
 interface ReminderNotifier {
@@ -100,41 +116,84 @@ interface ReminderNotifier {
 }
 ```
 
-Possible adapters include Google Routes, Mapbox Directions, HERE, OpenRouteService, OSRM, Valhalla, browser geolocation, a mobile agent runtime, or a custom source.
+### LocationProvider
+
+Returns the user's latest coordinates. The data may come from a phone agent runtime, browser geolocation, wearable, vehicle, custom device, or another trusted source.
+
+### PlaceProvider
+
+Resolves a saved or named destination such as `home`, `work`, or `pharmacy` into coordinates.
+
+### RouteProvider
+
+Returns an updated travel ETA. Possible adapters include:
+
+- Google Routes
+- Mapbox Directions
+- HERE Routing
+- OpenRouteService
+- OSRM
+- Valhalla
+- GraphHopper
+- A custom routing service
+
+### ReminderNotifier
+
+Returns the final reminder event to the developer's AI agent, notification layer, webhook, chat system, or other callback.
 
 ## Adaptive checking
 
-The first ETA is not treated as the reminder time. It is used to choose when the engine should investigate again.
+The initial ETA is not the notification deadline. It only helps the engine decide when to investigate again.
 
 ```text
-ETA: 55 minutes → internal recheck later
-ETA: 18 minutes → check sooner
-ETA: 4 minutes  → check frequently
-Inside arrival radius → trigger reminder
+ETA 55 minutes -> schedule a later internal check
+ETA 18 minutes -> check sooner
+ETA 4 minutes  -> check frequently
+User arrives   -> trigger the reminder
 ```
 
-This reduces unnecessary polling while adapting to traffic, route changes, stops, or delays.
+This allows the reminder to adapt when traffic changes, the user stops somewhere, the route changes, or the first ETA is wrong.
+
+## Example scenario
+
+The user says:
+
+> Remind me to take medicine when I get home.
+
+AgentPresent can perform this sequence:
+
+1. Resolve the user's saved home coordinates.
+2. Read the user's current location.
+3. Calculate an ETA of 55 minutes.
+4. Schedule an internal check before the expected arrival.
+5. Wake up and request fresh location and ETA information.
+6. Continue adapting the check interval as the user gets closer.
+7. Confirm the user is within the configured arrival radius.
+8. Send `Take your medicine` back to the AI agent.
 
 ## Privacy principles
 
-- No AgentPresent cloud is required.
-- Providers are injected by the developer.
+- No AgentPresent cloud service is required.
+- Provider credentials belong to the developer.
 - Raw location history does not need to be stored.
-- Agent developers should request explicit location permission.
-- Reminder events should explain why they triggered.
-- Users must be able to cancel monitoring.
+- Location access should require clear user permission.
+- Users should be able to inspect and cancel active monitors.
+- Reminder events should explain why they were triggered.
 
 ## Roadmap
 
-- Persistent reminder store and process restarts
-- Retry and provider fallback policies
-- Google, Mapbox, OpenRouteService, and OSRM adapters
-- Webhook and agent callback notifier
-- MCP server/tool interface
-- Natural-language intent parser
-- Arrival, departure, nearby, route, and dwell triggers
-- Battery/API-budget-aware scheduling
-- Observability and audit events
+- Persistent reminder storage
+- Recovery after process restarts
+- Provider retry and fallback policies
+- Google Routes adapter
+- Mapbox adapter
+- OpenRouteService adapter
+- OSRM adapter
+- MCP server and tools
+- Natural-language intent parsing
+- Departure, nearby, dwell, and route triggers
+- API-budget-aware scheduling
+- Audit events and observability
 
 ## Development
 
@@ -142,9 +201,14 @@ This reduces unnecessary polling while adapting to traffic, route changes, stops
 npm install
 npm run build
 npm test
+npm run check
 ```
 
-See [`examples/basic.ts`](examples/basic.ts) for a runnable provider-agnostic example.
+A provider-agnostic example is available in [`examples/basic.ts`](examples/basic.ts).
+
+## Contributing
+
+Contributions, provider adapters, bug reports, and design discussions are welcome. Open an issue before beginning a large change so the architecture can be discussed first.
 
 ## License
 
