@@ -4,6 +4,7 @@ import {
   type PlaceProvider,
   type ReminderNotifier,
   type RouteProvider,
+  type TelemetrySink,
 } from "../src/index.js";
 
 const HOME = { latitude: 5.6037, longitude: -0.1870 };
@@ -17,7 +18,7 @@ const location: LocationProvider = {
       HOME,
     ];
     const current = samples[Math.min(step++, samples.length - 1)]!;
-    return { ...current, recordedAt: new Date() };
+    return { ...current, recordedAt: new Date(), accuracyMeters: 10 };
   },
 };
 
@@ -44,8 +45,13 @@ const routes: RouteProvider = {
 
 const notifier: ReminderNotifier = {
   async notify(event) {
+    console.log(`REMINDER: ${event.intent.message}`);
+  },
+};
+
+const telemetry: TelemetrySink = {
+  async record(event) {
     console.log(`[${event.state}] ${event.reason ?? ""}`);
-    if (event.state === "triggered") console.log(`REMINDER: ${event.intent.message}`);
   },
 };
 
@@ -54,12 +60,17 @@ const agentPresent = new AgentPresent({
   places,
   routes,
   notifier,
+  telemetry,
   minimumCheckIntervalMs: 100,
   maximumCheckIntervalMs: 500,
 });
 
-await agentPresent.monitor({
+const handle = agentPresent.monitor({
   id: "medicine-at-home",
   message: "Take your medicine",
   destination: { type: "saved-place", placeId: "home" },
+  maximumDurationMs: 10_000,
 });
+
+console.log(`Started ${handle.id} without blocking the agent.`);
+console.log("Final result:", await handle.completion);
