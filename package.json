@@ -1,6 +1,6 @@
 {
   "name": "agentpresent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Open-source context-aware reminder engine for AI agents.",
   "type": "module",
   "main": "dist/index.js",
@@ -16,12 +16,22 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "example": "tsx examples/basic.ts",
     "check": "npm run build && npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiwithenoch/agentpresent.git"
+  },
+  "homepage": "https://github.com/aiwithenoch/agentpresent#readme",
+  "bugs": {
+    "url": "https://github.com/aiwithenoch/agentpresent/issues"
   },
   "keywords": ["ai-agent", "reminders", "location", "geofencing", "mcp", "context-aware"],
   "license": "MIT",
   "engines": {"node": ">=20"},
   "devDependencies": {
+    "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^2.1.8"
   }
